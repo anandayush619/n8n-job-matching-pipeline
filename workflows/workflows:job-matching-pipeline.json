@@ -1,0 +1,644 @@
+{
+  "name": "Find High-Quality Remote Jobs with AI, Decodo, and Google Sheets",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "d7a35c63-0f74-4865-9c68-d8bd62ce28f3",
+      "name": "Daily trigger (job scan)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        192,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "63cc4a4c-c48f-464e-a973-a1d8030ac3ad",
+      "name": "Read Candidate Profile",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        640,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "url": "<__PLACEHOLDER_VALUE__Your Decodo API endpoint URL__>",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "ea0e1ad7-5805-4cf2-a6ce-0d475ed4c937",
+      "name": "Fetch Jobs (Decodo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1088,
+        960
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const profile = $('Merge Experience with Profile').first().json;\nconst job = $json;\n\nreturn {\n  json: {\n    job: job,\n    profile: profile\n  }\n};"
+      },
+      "id": "97c57e2c-571a-4b24-be47-ac984fa81d92",
+      "name": "Combine Profile with Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Evaluate the job fit for this candidate.\n\nJob Details:\nTitle: {{ $json.job.title }}\nCompany: {{ $json.job.company }}\nSalary: {{ $json.job.salary }}\nLocation: {{ $json.job.location }}\nDescription: {{ $json.job.description }}\nRequired Skills: {{ $json.job.skills }}\nRequired Experience: {{ $json.job.requiredExperience }}\n\nCandidate Profile:\nSkills: {{ $json.profile.skills }}\nYears of Experience: {{ $json.profile.yearsOfExperience }}\nSalary Range: {{ $json.profile.minSalary }}-{{ $json.profile.maxSalary }}\nSeniority: {{ $json.profile.seniority }}\nIndustry: {{ $json.profile.industry }}\n\nCRITICAL EXPERIENCE MATCHING RULES:\n- This candidate has EXACTLY {{ $json.profile.yearsOfExperience }} years of experience\n- For freshers (0 years): ONLY match entry-level, junior, trainee, or intern roles. Reject roles requiring 1+ years\n- For 1 year experience: Match junior roles and some entry-level positions requiring up to 1 year\n- For 2+ years: Match mid-level roles appropriate to their experience\n- Heavily penalize mismatches: a fresher matched to a senior role should score below 30\n- Prioritize learning opportunities, mentorship, and growth potential for freshers\n- Consider if the role explicitly welcomes fresh graduates or career starters\n\nProvide a fit score from 0-100 and a brief explanation. Format your response as:\nScore: [number]\nExplanation: [text]",
+        "options": {
+          "systemMessage": "You are an expert job matching assistant specializing in matching candidates to appropriate experience-level roles, with special focus on fresher and entry-level positions. Evaluate job opportunities against candidate profiles based on: 1) Experience level match (MOST IMPORTANT for freshers), 2) Skills match, 3) Salary alignment, 4) Learning opportunities, 5) Industry fit. Be STRICT about experience requirements - a fresher (0 years) should NEVER score high for roles requiring 2+ years experience. Provide a numerical score (0-100) and a clear explanation focusing on why the experience level does or does not match."
+        }
+      },
+      "id": "ae5b0291-30ee-4de2-8216-df8a18284247",
+      "name": "Evaluate Job Fit",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1536,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {
+          "webSearch": {
+            "searchContextSize": "high",
+            "country": "india"
+          }
+        },
+        "options": {}
+      },
+      "id": "fc5136c3-8238-4be5-a549-816912c1e9db",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1616,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const aiOutput = $json.output;\nconst scoreMatch = aiOutput.match(/Score:\\s*(\\d+)/i);\nconst score = scoreMatch ? parseInt(scoreMatch[1]) : 0;\n\nconst explanationMatch = aiOutput.match(/Explanation:\\s*(.+)/is);\nconst explanation = explanationMatch ? explanationMatch[1].trim() : aiOutput;\n\nconst job = $(\"Combine Profile with Jobs\").item.json.job;\nconst profile = $(\"Combine Profile with Jobs\").item.json.profile;\n\nreturn {\n  json: {\n    jobId: job.id,\n    title: job.title,\n    company: job.company,\n    salary: job.salary,\n    location: job.location,\n    url: job.url,\n    requiredExperience: job.requiredExperience,\n    candidateExperience: profile.yearsOfExperience,\n    fitScore: score,\n    explanation: explanation\n  }\n};"
+      },
+      "id": "a88797a0-fee6-421c-88f8-2c3ed4137e16",
+      "name": "Extract Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1888,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.fitScore }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              },
+              "id": "7d40fea9-b0cd-4cbd-a462-6c9d18e09714"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8e6812b6-af1b-43d1-9c6c-51eb7c1c937e",
+      "name": "Filter High-Quality Matches",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        2112,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "job_title"
+          ],
+          "schema": [
+            {
+              "id": "job_title",
+              "displayName": "job_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "salary",
+              "displayName": "salary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "experience",
+              "displayName": "experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_url",
+              "displayName": "job_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "industry",
+              "displayName": "industry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "match_score",
+              "displayName": "match_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "23e553a4-722b-4126-872e-7d16a80b4428",
+      "name": "Save Matches to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2336,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "sortFieldsUi": {
+          "sortField": [
+            {
+              "fieldName": "fitScore",
+              "order": "descending"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "45823693-080e-4eb8-90fd-2d740cba0c19",
+      "name": "Sort by Fit Score",
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [
+        2560,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 5
+      },
+      "id": "74dcc710-61e9-4410-972b-64c9fe1e7c18",
+      "name": "Top 5 Jobs",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2784,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "jobs",
+        "options": {}
+      },
+      "id": "10b8a08b-bc43-45e6-979c-4f7c24d904e6",
+      "name": "Aggregate Top Jobs",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3008,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const jobs = $json.jobs;\nconst candidateExp = jobs[0]?.candidateExperience ?? 0;\nconst expLabel = candidateExp === 0 ? \"Fresher\" : `${candidateExp} year${candidateExp > 1 ? \"s\" : \"\"} experience`;\n\nlet html = `\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    h1 { color: #2c3e50; }\n    .exp-badge { background: #3498db; color: white; padding: 8px 15px; border-radius: 5px; display: inline-block; margin-bottom: 15px; }\n    .job { border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 5px; }\n    .job-title { color: #3498db; font-size: 18px; font-weight: bold; }\n    .company { color: #7f8c8d; font-size: 14px; }\n    .score { background: #27ae60; color: white; padding: 5px 10px; border-radius: 3px; display: inline-block; }\n    .exp-match { color: #e67e22; font-weight: bold; }\n    .details { margin: 10px 0; }\n    a { color: #3498db; text-decoration: none; }\n  </style>\n</head>\n<body>\n  <h1>🎯 Your Top 5 Job Matches</h1>\n  <div class=\"exp-badge\">👤 Your Experience Level: ${expLabel}</div>\n  <p>Here are the best job opportunities matched to your experience level and profile:</p>\n`;\n\njobs.forEach((job, index) => {\n  html += `\n  <div class=\"job\">\n    <div class=\"job-title\">${index + 1}. ${job.title}</div>\n    <div class=\"company\">${job.company}</div>\n    <div class=\"details\">\n      <strong>Salary:</strong> ${job.salary}<br>\n      <strong>Location:</strong> ${job.location}<br>\n      <span class=\"exp-match\">Required Experience:</span> ${job.requiredExperience || \"Not specified\"}<br>\n      <span class=\"score\">Fit Score: ${job.fitScore}%</span>\n    </div>\n    <p><strong>Why it matches:</strong> ${job.explanation}</p>\n    <p><a href=\"${job.url}\" target=\"_blank\">View Job Details →</a></p>\n  </div>\n  `;\n});\n\nhtml += `\n  <p style=\"margin-top: 30px; color: #7f8c8d; font-size: 12px;\">\n    This email was generated automatically by your job matching workflow.\n  </p>\n</body>\n</html>\n`;\n\nreturn {\n  json: {\n    html: html,\n    subject: `Your Top ${jobs.length} Job Matches (${expLabel}) - ${new Date().toLocaleDateString()}`\n  }\n};"
+      },
+      "id": "516b5ac3-2f18-4caf-bf02-58f20c1e2449",
+      "name": "Build HTML Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3232,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "<__PLACEHOLDER_VALUE__Your email address__>",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "7d1c6fd2-717e-4583-8e9e-cefb890783cb",
+      "name": "Send Email Summary",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3456,
+        960
+      ],
+      "webhookId": "8a000fc4-8d99-4f64-a551-3aa0c04bd6fa"
+    },
+    {
+      "parameters": {
+        "content": "## What this workflow does\n\nThis workflow automates the discovery, evaluation, and notification of job opportunities based on a candidate profile, with special focus on freshers and experience-level matching.\n\nIt fetches remote job listings, compares each role against a structured candidate profile stored in Google Sheets, and uses AI to evaluate real alignment in terms of skills, seniority, salary, industry, and MOST IMPORTANTLY - years of experience.\n\nYou control the years of experience directly in the workflow. The AI strictly matches freshers (0 years) to entry-level roles only, and penalizes mismatches heavily.\n\nOnly the most relevant opportunities are kept, stored in Google Sheets, and delivered via email as a Top 5 shortlist.\n\n## How to configure (quick setup)\n1. Set your years of experience in the \"Set Experience Level\" node (0 for freshers, 1, 2, 3, etc.).\n2. Define the candidate profile in Google Sheets (skills, salary expectations, preferences).\n3. Configure credentials (Google Sheets, Gmail, Decodo, OpenAI).\n4. The matching threshold is set to 65% to account for strict experience filtering.\n5. Run the workflow manually or on a schedule.\n\n## Output\n- Structured job match results in Google Sheets\n- Automated email with the Top 5 best-matched job opportunities for your experience level",
+        "height": 1120,
+        "width": 480,
+        "color": 4
+      },
+      "id": "3ae790de-9bfd-4db7-94d1-c2e5ef60e2cc",
+      "name": "Sticky Note f9cac61b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 1. Experience & Profile Input\n- Set your years of experience (YOU control this)\n- Reads the candidate profile from Google Sheets\n- Merges experience level with profile data",
+        "width": 560,
+        "color": 7
+      },
+      "id": "1817f2a5-e861-46e5-882f-34f14a02d928",
+      "name": "Sticky Note 8c1c9cd8",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2144,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Data collection & AI scoring\n- Fetches remote job listings using Decodo.\n- Extracts structured job data\n- Combines each job with the candidate profile.\n- An AI agent evaluates fit with STRICT experience-level matching (freshers only get entry-level roles).",
+        "height": 240,
+        "width": 1280,
+        "color": 7
+      },
+      "id": "ba68b0af-5a06-49b1-a55b-f0c8011d3cec",
+      "name": "Sticky Note 7a6b7c86",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        720,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Results & notifications\n- Filters jobs based on a minimum fit score (65% to account for strict experience filtering).\n- Saves qualified matches to Google Sheets for tracking.\n- Builds an HTML email with the Top 5 job matches showing your experience level and required experience.\n- Sends the summary via Gmail.",
+        "height": 192,
+        "width": 2240,
+        "color": 7
+      },
+      "id": "16840d79-eb15-4fa5-a352-21e3bece64bd",
+      "name": "Sticky Note bb797997",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "yearsOfExperience",
+              "type": "number",
+              "value": 0
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e41abb03-8f18-4b56-8e85-a6f122b074b0",
+      "name": "Set Experience Level",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "866d9944-20dd-41a5-b20f-a914f2ecb0bd",
+      "name": "Merge Experience with Profile",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        864,
+        960
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily trigger (job scan)": {
+      "main": [
+        [
+          {
+            "node": "Set Experience Level",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Candidate Profile": {
+      "main": [
+        [
+          {
+            "node": "Merge Experience with Profile",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch Jobs (Decodo)": {
+      "main": [
+        [
+          {
+            "node": "Combine Profile with Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Profile with Jobs": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Job Fit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Job Fit": {
+      "main": [
+        [
+          {
+            "node": "Extract Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Evaluate Job Fit",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Score": {
+      "main": [
+        [
+          {
+            "node": "Filter High-Quality Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter High-Quality Matches": {
+      "main": [
+        [
+          {
+            "node": "Save Matches to Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Matches to Sheets": {
+      "main": [
+        [
+          {
+            "node": "Sort by Fit Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort by Fit Score": {
+      "main": [
+        [
+          {
+            "node": "Top 5 Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Top 5 Jobs": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Top Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Top Jobs": {
+      "main": [
+        [
+          {
+            "node": "Build HTML Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HTML Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Experience Level": {
+      "main": [
+        [
+          {
+            "node": "Read Candidate Profile",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Experience with Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Experience with Profile": {
+      "main": [
+        [
+          {
+            "node": "Fetch Jobs (Decodo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4e3d8bf4-e725-4add-a9fb-8555b095b481",
+  "meta": {
+    "instanceId": "6a5062733ae8df322bccc251c099da38749dad27ac1eedb14ca436d533084cea"
+  },
+  "nodeGroups": [],
+  "id": "4OrARK8wX0ArkVGt",
+  "tags": []
+}
